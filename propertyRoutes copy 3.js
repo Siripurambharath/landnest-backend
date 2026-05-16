@@ -1,40 +1,10 @@
 const express = require("express");
 const { db } = require('./server');
+// const redisClient = require("./redisClient");
 const router = express.Router();   
 
 
-router.get('/property-locations', async (req, res) => {
-  try {
 
-    const [rows] = await db.execute(`
-      SELECT 
-        property_id,
-        property_name,
-        type,
-        lat,
-        \`long\`
-      FROM property_property
-      WHERE lat IS NOT NULL
-      AND \`long\` IS NOT NULL
-      LIMIT 5
-    `);
-
-    res.json({
-      success: true,
-      count: rows.length,
-      properties: rows
-    });
-
-  } catch (error) {
-
-    console.error("Error fetching properties:", error);
-
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
 
 // Get auction properties map - FIXED
 router.get('/auctionpropertymap', async (req, res) => {
@@ -640,11 +610,12 @@ router.post('/images/batch', async (req, res) => {
 });
 
 
+// Get map properties with all fields
 router.get('/map', async (req, res) => {
   const {
     south, north, west, east,
-    type,               
-    propertyType,        
+    type,                // sell / rent / lease
+    propertyType,        // property_type
     zoom,
     priceMin, priceMax,
     limit = 10000
