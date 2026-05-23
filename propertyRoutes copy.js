@@ -8,28 +8,7 @@ router.get("/hello", (req, res) => {
   res.send("Hello World from Router 🚀");
 });
 
-router.get('/all', async (req, res) => {
-  try {
-    console.log("Fetching all properties...");
-    const [rows] = await db.execute(
-      `SELECT * FROM property_property LIMIT 5`
-    );
- console.log("Total properties fetched:", rows.length);
-    console.log("Properties Data:", rows);
-    res.json({
-      success: true,
-      count: rows.length,
-      properties: rows
-    });
 
-  } catch (error) {
-    console.error("Error fetching properties:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
 
 
 
@@ -37,7 +16,7 @@ router.get('/:id/images', async (req, res) => {
   try {
     const propertyId = req.params.id;
     
-    console.log(`Fetching images for property ID: ${propertyId}`); // Debug log
+    console.log(`Fetching images for property ID: ${propertyId}`); // Debug log/
     
     // Check if property exists
     const [propertyExists] = await db.query(

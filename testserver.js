@@ -2,7 +2,7 @@ const mysql = require('mysql2');
 
 // Create connection
 const connection = mysql.createConnection({
-  host: '2401:4900:9380:a12e:3072:e10:fc8c:a274', 
+  host: '2401:4900:6572:7224:d68:1156:b8a2:f87d', 
   user: 'root',
   password: 'Root@1234',
   database: 'landnest_db',
@@ -19,7 +19,7 @@ connection.connect((err) => {
 });
 
 // Example query
-connection.query('SELECT * FROM property_property LIMIT 5', (err, results) => {
+connection.query('SELECT * FROM property_property_cat LIMIT 10', (err, results) => {
   if (err) {
     console.error('❌ Query error:', err.message);
     return;
