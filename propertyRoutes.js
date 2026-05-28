@@ -142,8 +142,7 @@ router.get('/prime/map', async (req, res) => {
       LEFT JOIN property_property_cat c 
         ON c.category_id = p.category_id_id 
         AND c.category_type = p.type
-      WHERE p.Admin_status = 'Approved'
-        AND p.posted_by = 'Admin'
+      WHERE p.posted_by = 'Admin'
         AND p.type = 'sell'
         AND p.lat IS NOT NULL 
         AND p.\`long\` IS NOT NULL
@@ -223,7 +222,6 @@ router.get('/prime/map', async (req, res) => {
       facing: p.facing,
       description: p.description,
       status: p.status,
-      adminStatus: p.Admin_status,
       userId: p.user_id_id,
       postedBy: p.posted_by,
       createdAt: p.created_at,
@@ -291,7 +289,7 @@ router.get('/prime/options/filters', async (req, res) => {
         AND p.type = c.category_type
       WHERE c.category IS NOT NULL
         AND c.category != ''
-        AND p.Admin_status = 'Approved'
+      
         AND p.posted_by = 'Admin'
         AND p.type = 'sell'
       ORDER BY c.category
@@ -302,16 +300,14 @@ router.get('/prime/options/filters', async (req, res) => {
         MIN(COALESCE(p.price, p.min_budget, 0)) as min_price,
         MAX(COALESCE(p.price, p.max_budget, 1000000000)) as max_price
       FROM property_property p
-      WHERE p.Admin_status = 'Approved'
-        AND p.posted_by = 'Admin'
+      WHERE p.posted_by = 'Admin'
         AND p.type = 'sell'
     `);
 
     const [countResult] = await db.query(`
       SELECT COUNT(*) as total
       FROM property_property p
-      WHERE p.Admin_status = 'Approved'
-        AND p.posted_by = 'Admin'
+      WHERE p.posted_by = 'Admin'
         AND p.type = 'sell'
         AND p.lat IS NOT NULL 
         AND p.\`long\` IS NOT NULL
@@ -796,6 +792,12 @@ router.get('/bestdealsmap', async (req, res) => {
         imagesMap.get(img.property_id).push(img.image);
       });
     }
+    const CATEGORY_ID_TO_NAME = {
+  57: 'Plot',
+  79: 'Land',
+  66: 'Apartment',
+  76: 'Villa',
+};
 
     // Transform response with images
     const transformed = properties.map(p => ({
@@ -846,10 +848,10 @@ router.get('/bestdealsmap', async (req, res) => {
       advancePayment: p.advance_payment,
       boostDate: p.boost_date,
       categoryId: p.category_id_id,
-      categoryName: p.categoryName,
+      categoryName: p.categoryName || CATEGORY_ID_TO_NAME[p.category_id_id] || null,
       listingStatus: p.listing_status,
       createdAt: p.created_at,
-      images: imagesMap.get(p.id) || [] // Add images array
+      
     }));
 
     res.json({
@@ -1201,7 +1203,11 @@ router.get('/map', async (req, res) => {
       FROM property_property p
       LEFT JOIN property_property_cat c 
         ON c.category_id = p.category_id_id 
-        AND c.category_type = p.type
+        AND (
+          (c.category_type = 'sell' AND p.type = 'sell')
+          OR 
+          (c.category_type = 'rent/lease' AND p.type IN ('rent', 'lease'))
+        )
       WHERE p.Admin_status = 'Approved'
         AND p.lat IS NOT NULL 
         AND p.\`long\` IS NOT NULL
@@ -1234,18 +1240,16 @@ router.get('/map', async (req, res) => {
       params.push(minPriceVal, maxPriceVal);
     }
 
-// Category filter
-if (propertyType && propertyType.trim() !== '') {
-  const arr = propertyType.split(',').filter(p => p && p.trim());
+    // Category filter
+    if (propertyType && propertyType.trim() !== '') {
+      const arr = propertyType.split(',').filter(p => p && p.trim());
 
-  if (arr.length > 0) {
-    const placeholders = arr.map(() => '?').join(',');
-
-    query += ` AND c.category IN (${placeholders})`;
-
-    params.push(...arr);
-  }
-}
+      if (arr.length > 0) {
+        const placeholders = arr.map(() => '?').join(',');
+        query += ` AND c.category IN (${placeholders})`;
+        params.push(...arr);
+      }
+    }
 
     // Listing Type filter
     if (type && type.trim() !== '') {
@@ -1284,7 +1288,6 @@ if (propertyType && propertyType.trim() !== '') {
     const transformed = properties.map(p => ({
       id: p.id,
       title: p.title,
-     
       listingType: p.listingType,
       price: parseFloat(p.price) || 0,
       minBudget: p.min_budget,
@@ -1352,12 +1355,16 @@ if (propertyType && propertyType.trim() !== '') {
 });
 
 
-
 router.get('/options/filters', async (req, res) => {
   try {
     const { type } = req.query;
 
     console.log('Filter options requested for type:', type);
+
+    let categoryTypeFilter = type;
+    if (type === 'rent' || type === 'lease') {
+      categoryTypeFilter = 'rent/lease';
+    }
 
     // ✅ Get ALL categories from category table
     const [categories] = await db.query(`
@@ -1367,11 +1374,15 @@ router.get('/options/filters', async (req, res) => {
       FROM property_property_cat c
       WHERE c.category IS NOT NULL
         AND c.category != ''
-        ${type && type.trim() !== '' ? 'AND c.category_type = ?' : ''}
+        ${categoryTypeFilter && categoryTypeFilter.trim() !== '' ? 'AND c.category_type = ?' : ''}
       ORDER BY c.category
-    `, type && type.trim() !== '' ? [type] : []);
+    `, categoryTypeFilter && categoryTypeFilter.trim() !== '' ? [categoryTypeFilter] : []);
 
-    // ✅ Price Range
+    let propertyTypeFilter = type;
+    if (type === 'lease') {
+      propertyTypeFilter = 'rent'; // properties with type='lease' also exist
+    }
+
     const [priceRange] = await db.query(`
       SELECT 
         MIN(COALESCE(p.price, p.min_budget, 0)) as min_price,
@@ -1379,8 +1390,8 @@ router.get('/options/filters', async (req, res) => {
       FROM property_property p
       WHERE p.status = 1 
         AND p.Admin_status = 'Approved'
-        ${type && type.trim() !== '' ? 'AND p.type = ?' : ''}
-    `, type && type.trim() !== '' ? [type] : []);
+        ${propertyTypeFilter && propertyTypeFilter.trim() !== '' ? 'AND p.type = ?' : ''}
+    `, propertyTypeFilter && propertyTypeFilter.trim() !== '' ? [propertyTypeFilter] : []);
 
     // ✅ Total Properties Count
     const [countResult] = await db.query(`
@@ -1388,8 +1399,8 @@ router.get('/options/filters', async (req, res) => {
       FROM property_property p
       WHERE p.status = 1 
         AND p.Admin_status = 'Approved'
-        ${type && type.trim() !== '' ? 'AND p.type = ?' : ''}
-    `, type && type.trim() !== '' ? [type] : []);
+        ${propertyTypeFilter && propertyTypeFilter.trim() !== '' ? 'AND p.type = ?' : ''}
+    `, propertyTypeFilter && propertyTypeFilter.trim() !== '' ? [propertyTypeFilter] : []);
 
     console.log('Categories found:', categories.length);
     console.log('Price range:', priceRange[0]);
