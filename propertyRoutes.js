@@ -144,6 +144,7 @@ router.get('/prime/map', async (req, res) => {
         AND c.category_type = p.type
       WHERE p.posted_by = 'Admin'
         AND p.type = 'sell'
+        AND p.status = 1
         AND p.lat IS NOT NULL 
         AND p.\`long\` IS NOT NULL
         AND p.lat != ''
@@ -289,20 +290,11 @@ router.get('/prime/options/filters', async (req, res) => {
         AND p.type = c.category_type
       WHERE c.category IS NOT NULL
         AND c.category != ''
-      
         AND p.posted_by = 'Admin'
         AND p.type = 'sell'
       ORDER BY c.category
     `);
 
-    const [priceRange] = await db.query(`
-      SELECT 
-        MIN(COALESCE(p.price, p.min_budget, 0)) as min_price,
-        MAX(COALESCE(p.price, p.max_budget, 1000000000)) as max_price
-      FROM property_property p
-      WHERE p.posted_by = 'Admin'
-        AND p.type = 'sell'
-    `);
 
     const [countResult] = await db.query(`
       SELECT COUNT(*) as total
@@ -315,12 +307,15 @@ router.get('/prime/options/filters', async (req, res) => {
         AND p.\`long\` != ''
     `);
 
+    const DEFAULT_MIN_PRICE = 0;
+    const DEFAULT_MAX_PRICE = 10000000000; // 1000 Cr
+
     res.json({
       success: true,
       categories,
       priceRange: {
-        min: priceRange[0]?.min_price || 0,
-        max: priceRange[0]?.max_price || 5000000000
+        min: DEFAULT_MIN_PRICE,  // Always 0 (no filter)
+        max: DEFAULT_MAX_PRICE   // Always large number (no filter)
       },
       totalProperties: countResult[0]?.total || 0
     });
@@ -334,7 +329,6 @@ router.get('/prime/options/filters', async (req, res) => {
   }
 });
 
-// Get auction properties map - FIXED
 router.get('/auctionpropertymap', async (req, res) => {
   const {
     south, north, west, east,
@@ -360,6 +354,7 @@ router.get('/auctionpropertymap', async (req, res) => {
         \`long\` as lng,
         property_type as propertyType,
         bank_name as bankName,
+        bank_contact_details as bankContactDetails,
         action_type as actionType,
         reserve_price as price,
         area,
@@ -373,13 +368,15 @@ router.get('/auctionpropertymap', async (req, res) => {
         auction_end_datetime as auctionEnd,
         description,
         status,
+        admin_status,
         created_at,
         CASE 
           WHEN DATEDIFF(NOW(), created_at) <= 7 THEN 'new'
           ELSE 'old'
         END as listingStatus
       FROM property_bankauctionproperty 
-    WHERE status = 'Approved'
+    WHERE status = 1 
+        AND admin_status = 'Approved'
         AND lat IS NOT NULL 
         AND \`long\` IS NOT NULL
         AND lat != 0
@@ -400,7 +397,7 @@ router.get('/auctionpropertymap', async (req, res) => {
       );
     }
 
-    // Price filter - FIXED: Better validation
+    // Price filter
     const minPrice = priceMin !== undefined && priceMin !== null && priceMin !== '' ? parseFloat(priceMin) : null;
     const maxPrice = priceMax !== undefined && priceMax !== null && priceMax !== '' ? parseFloat(priceMax) : null;
     
@@ -409,7 +406,7 @@ router.get('/auctionpropertymap', async (req, res) => {
       params.push(minPrice, maxPrice);
     }
 
-    // Property Type filter - FIXED: Handle empty strings
+    // Property Type filter
     if (type && type.trim() !== '') {
       const arr = type.split(',').filter(t => t && t.trim());
       if (arr.length > 0) {
@@ -419,7 +416,7 @@ router.get('/auctionpropertymap', async (req, res) => {
       }
     }
 
-    // Bank Name filter - FIXED: Handle empty strings
+    // Bank Name filter
     if (bank_name && bank_name.trim() !== '') {
       const arr = bank_name.split(',').filter(b => b && b.trim());
       if (arr.length > 0) {
@@ -449,7 +446,6 @@ router.get('/auctionpropertymap', async (req, res) => {
     console.log('Auction Params count:', params.length);
     console.log('Auction Params:', params);
 
-    // FIXED: Changed from db.execute to db.query
     const [properties] = await db.query(query, params);
 
     console.log(`Found ${properties.length} auction properties`);
@@ -461,6 +457,7 @@ router.get('/auctionpropertymap', async (req, res) => {
       lng: parseFloat(p.lng),
       propertyType: p.propertyType,
       bankName: p.bankName,
+      bankContactDetails: p.bankContactDetails,
       actionType: p.actionType,
       price: parseFloat(p.price) || 0,
       area: parseFloat(p.area) || 0,
@@ -474,6 +471,7 @@ router.get('/auctionpropertymap', async (req, res) => {
       auctionEnd: p.auctionEnd,
       description: p.description,
       status: p.status,
+      adminStatus: p.admin_status,  // Added adminStatus to response
       listingStatus: p.listingStatus,
       created_at: p.created_at
     }));
@@ -502,44 +500,38 @@ router.get('/auction/options/filters', async (req, res) => {
   try {
     console.log('Fetching auction filter options');
 
-    // Property Types
+    // Property Types - Updated WHERE clause
     const [typeOptions] = await db.query(`
       SELECT DISTINCT 
         property_type as value, 
         property_type as label 
       FROM property_bankauctionproperty 
-      WHERE status = 'Approved'
+      WHERE status = 1 
+        AND admin_status = 'Approved'
         AND property_type IS NOT NULL 
         AND property_type != ''
       ORDER BY property_type
     `);
 
-    // Bank Names
+    // Bank Names - Updated WHERE clause
     const [bankOptions] = await db.query(`
       SELECT DISTINCT 
         bank_name as value, 
         bank_name as label 
       FROM property_bankauctionproperty 
-      WHERE status = 'Approved'
+      WHERE status = 1 
+        AND admin_status = 'Approved'
         AND bank_name IS NOT NULL 
         AND bank_name != ''
       ORDER BY bank_name
     `);
 
-    // Price Range
-    const [priceRange] = await db.query(`
-      SELECT 
-        MIN(reserve_price) as min,
-        MAX(reserve_price) as max
-      FROM property_bankauctionproperty 
-      WHERE status = 'Approved'
-    `);
-
-    // Total Count
+    // Total Count - Updated WHERE clause
     const [totalCount] = await db.query(`
       SELECT COUNT(*) as total 
       FROM property_bankauctionproperty 
-      WHERE status = 'Approved'
+      WHERE status = 1 
+        AND admin_status = 'Approved'
     `);
 
     console.log('Auction filter options fetched successfully');
@@ -547,13 +539,17 @@ router.get('/auction/options/filters', async (req, res) => {
     console.log('Bank options count:', bankOptions.length);
     console.log('Total approved properties:', totalCount[0]?.total);
 
+    // Default price range (no filter applied initially)
+    const DEFAULT_MIN_PRICE = 0;
+    const DEFAULT_MAX_PRICE = 10000000000; // 1000 Cr (adjust as needed)
+
     res.json({
       success: true,
       typeOptions,
       bankOptions,
       priceRange: {
-        min: priceRange[0]?.min || 0,
-        max: priceRange[0]?.max || 1000000000
+        min: DEFAULT_MIN_PRICE,  // Always 0 (no filter)
+        max: DEFAULT_MAX_PRICE   // Always large number (no filter)
       },
       totalProperties: totalCount[0]?.total || 0
     });
@@ -630,18 +626,14 @@ router.get('/auction/property/:id', async (req, res) => {
 
 
 
-
 router.get('/bestdealsmap', async (req, res) => {
   const {
     south, north, west, east,
-    type,
     propertyType,
     zoom,
     priceMin, priceMax,
     limit = 10000
   } = req.query;
-
-  console.log('🔍 Best Deals Map request:', { south, north, west, east, type, propertyType, priceMin, priceMax, zoom });
 
   try {
     let query = `
@@ -705,14 +697,12 @@ router.get('/bestdealsmap', async (req, res) => {
         END as listing_status
       FROM property_property p
       LEFT JOIN property_property_cat c 
-        ON c.category_id = p.category_id_id 
-        AND c.category_type = p.type
+        ON c.category_id = p.category_id_id
       WHERE p.Admin_status = 'Approved'
+        AND p.status = 1
         AND p.type = 'best-deal'
         AND p.lat IS NOT NULL 
         AND p.\`long\` IS NOT NULL
-        AND p.lat != ''
-        AND p.\`long\` != ''
         AND TRIM(p.lat) != ''
         AND TRIM(p.\`long\`) != ''
     `;
@@ -740,9 +730,9 @@ router.get('/bestdealsmap', async (req, res) => {
       params.push(minPriceVal, maxPriceVal);
     }
 
-    // Category filter (using categoryName from joined table)
+    // Category filter
     if (propertyType && propertyType.trim() !== '') {
-      const arr = propertyType.split(',').filter(cat => cat && cat.trim());
+      const arr = propertyType.split(',').map(c => c.trim()).filter(Boolean);
       if (arr.length > 0) {
         const placeholders = arr.map(() => '?').join(',');
         query += ` AND c.category IN (${placeholders})`;
@@ -753,38 +743,25 @@ router.get('/bestdealsmap', async (req, res) => {
     // Zoom-based limit
     const zoomLevel = parseInt(zoom) || 5;
     let finalLimit = Math.min(parseInt(limit), 20000);
-
-    if (zoomLevel <= 7) {
-      finalLimit = Math.min(finalLimit, 2000);
-    } else if (zoomLevel <= 9) {
-      finalLimit = Math.min(finalLimit, 5000);
-    } else if (zoomLevel <= 12) {
-      finalLimit = Math.min(finalLimit, 10000);
-    }
+    if (zoomLevel <= 7)       finalLimit = Math.min(finalLimit, 2000);
+    else if (zoomLevel <= 9)  finalLimit = Math.min(finalLimit, 5000);
+    else if (zoomLevel <= 12) finalLimit = Math.min(finalLimit, 10000);
 
     query += ` ORDER BY p.created_at DESC LIMIT ?`;
     params.push(finalLimit);
 
-    console.log('Best Deals SQL Query:', query);
-    console.log('Best Deals Params count:', params.length);
-    console.log('Best Deals Params:', params);
-
     const [properties] = await db.query(query, params);
-
-    console.log(`Found ${properties.length} best deals properties`);
 
     // Fetch images for all properties in a single query
     const propertyIds = properties.map(p => p.id);
     let imagesMap = new Map();
-    
+
     if (propertyIds.length > 0) {
       const placeholders = propertyIds.map(() => '?').join(',');
       const [allImages] = await db.query(
         `SELECT property_id, image FROM property_property_images WHERE property_id IN (${placeholders}) ORDER BY id`,
         propertyIds
       );
-      
-      // Group images by property_id
       allImages.forEach(img => {
         if (!imagesMap.has(img.property_id)) {
           imagesMap.set(img.property_id, []);
@@ -792,18 +769,11 @@ router.get('/bestdealsmap', async (req, res) => {
         imagesMap.get(img.property_id).push(img.image);
       });
     }
-    const CATEGORY_ID_TO_NAME = {
-  57: 'Plot',
-  79: 'Land',
-  66: 'Apartment',
-  76: 'Villa',
-};
 
-    // Transform response with images
     const transformed = properties.map(p => ({
       id: p.id,
       title: p.title,
-      propertyType: p.categoryName || p.property_type, // Use categoryName if available
+      propertyType: p.categoryName || p.property_type,
       listingType: p.listingType,
       price: parseFloat(p.price) || 0,
       minBudget: p.min_budget,
@@ -848,10 +818,12 @@ router.get('/bestdealsmap', async (req, res) => {
       advancePayment: p.advance_payment,
       boostDate: p.boost_date,
       categoryId: p.category_id_id,
-      categoryName: p.categoryName || CATEGORY_ID_TO_NAME[p.category_id_id] || null,
+      categoryName: p.categoryName || null,
       listingStatus: p.listing_status,
-      createdAt: p.created_at,
-      
+      status: p.status,
+      adminStatus: p.Admin_status,
+      images: imagesMap.get(p.id) || [],
+      createdAt: p.created_at
     }));
 
     res.json({
@@ -863,91 +835,56 @@ router.get('/bestdealsmap', async (req, res) => {
 
   } catch (error) {
     console.error('Best deals map data error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      properties: []
-    });
+    res.status(500).json({ success: false, error: error.message, properties: [] });
   }
 });
 
 
 router.get('/bestdeals/options/filters', async (req, res) => {
   try {
-    const { type } = req.query;
-
-    console.log('Best deals filter options requested for type:', type);
-
-    // Get categories from category table for best-deal type
     const [categories] = await db.query(`
       SELECT DISTINCT 
         c.category as value,
         c.category as label
       FROM property_property_cat c
       INNER JOIN property_property p 
-        ON p.category_id_id = c.category_id 
-        AND p.type = c.category_type
+        ON p.category_id_id = c.category_id
       WHERE c.category IS NOT NULL
         AND c.category != ''
         AND p.Admin_status = 'Approved'
-        AND p.type = 'best-deal'
         AND p.status = 1
-        ${type && type.trim() !== '' ? 'AND c.category_type = ?' : ''}
-      ORDER BY c.category
-    `, type && type.trim() !== '' ? [type] : []);
-
-    // Get price range for best-deal properties
-    const [priceRange] = await db.query(`
-      SELECT 
-        MIN(COALESCE(p.price, p.min_budget, 0)) as min_price,
-        MAX(COALESCE(p.price, p.max_budget, 1000000000)) as max_price
-      FROM property_property p
-      WHERE p.status = 1 
-        AND p.Admin_status = 'Approved'
         AND p.type = 'best-deal'
-        ${type && type.trim() !== '' ? 'AND p.type = ?' : ''}
-    `, type && type.trim() !== '' ? [type] : []);
+      ORDER BY c.category
+    `);
 
-    // Get total count of best-deal properties
     const [countResult] = await db.query(`
       SELECT COUNT(*) as total
       FROM property_property p
-      WHERE p.status = 1 
-        AND p.Admin_status = 'Approved'
+      WHERE p.Admin_status = 'Approved'
+        AND p.status = 1
         AND p.type = 'best-deal'
-        ${type && type.trim() !== '' ? 'AND p.type = ?' : ''}
-    `, type && type.trim() !== '' ? [type] : []);
-
-    console.log('Best deals categories found:', categories.length);
-    console.log('Best deals price range:', priceRange[0]);
-    console.log('Best deals total count:', countResult[0]?.total);
+    `);
 
     res.json({
       success: true,
-      categories: categories.length ? categories : [],
+      categories,
       priceRange: {
-        min: priceRange[0]?.min_price || 0,
-        max: priceRange[0]?.max_price || 5000000000
+        min: 0,
+        max: 10000000000
       },
       totalProperties: countResult[0]?.total || 0
     });
 
   } catch (error) {
     console.error('Best deals filter options error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
-
 
 router.get('/bestdeals/property/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
-    console.log(`Fetching best deal property with ID: ${id}`);
-
     const [properties] = await db.query(`
       SELECT 
         p.property_id as id,
@@ -1005,10 +942,11 @@ router.get('/bestdeals/property/:id', async (req, res) => {
         c.category as categoryName
       FROM property_property p
       LEFT JOIN property_property_cat c 
-        ON c.category_id = p.category_id_id 
-        AND c.category_type = p.type
+        ON c.category_id = p.category_id_id
       WHERE p.property_id = ?
         AND p.type = 'best-deal'
+        AND p.Admin_status = 'Approved'
+        AND p.status = 'active'
     `, [id]);
 
     if (!properties || properties.length === 0) {
@@ -1020,30 +958,21 @@ router.get('/bestdeals/property/:id', async (req, res) => {
 
     const property = properties[0];
 
-    // Get images
     const [images] = await db.query(
       'SELECT image FROM property_property_images WHERE property_id = ? ORDER BY id',
       [id]
     );
 
     property.images = images.map(img => img.image);
+    property.price = parseFloat(property.price) || 0;
+    property.lat   = parseFloat(property.lat);
+    property.lng   = parseFloat(property.lng);
 
-    // Convert numeric strings
-    if (property.price) property.price = parseFloat(property.price);
-    if (property.lat)   property.lat   = parseFloat(property.lat);
-    if (property.lng)   property.lng   = parseFloat(property.lng);
-
-    res.json({
-      success: true,
-      property: property
-    });
+    res.json({ success: true, property });
 
   } catch (error) {
     console.error('Error fetching best deal property:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -1123,8 +1052,6 @@ router.post('/images/batch', async (req, res) => {
     });
   }
 });
-
-
 router.get('/map', async (req, res) => {
   const {
     south, north, west, east,
@@ -1135,17 +1062,11 @@ router.get('/map', async (req, res) => {
     limit = 10000
   } = req.query;
 
-  console.log('🔍 Backend /map received params:', {
-    type, propertyType, priceMin, priceMax,
-    south, north, west, east
-  });
-
   try {
     let query = `
       SELECT 
         p.property_id as id,
         p.property_name as title,
-        
         p.type as listingType,
         COALESCE(p.price, p.min_budget) as price,
         p.min_budget,
@@ -1209,6 +1130,7 @@ router.get('/map', async (req, res) => {
           (c.category_type = 'rent/lease' AND p.type IN ('rent', 'lease'))
         )
       WHERE p.Admin_status = 'Approved'
+        AND p.status = 1
         AND p.lat IS NOT NULL 
         AND p.\`long\` IS NOT NULL
         AND p.lat != ''
@@ -1231,11 +1153,19 @@ router.get('/map', async (req, res) => {
       );
     }
 
-    // Price filter
-    const minPriceVal = priceMin !== undefined && priceMin !== null && priceMin !== '' ? parseFloat(priceMin) : null;
-    const maxPriceVal = priceMax !== undefined && priceMax !== null && priceMax !== '' ? parseFloat(priceMax) : null;
+    const minPriceVal = priceMin !== undefined && priceMin !== null && priceMin !== '' && priceMin !== 'undefined' 
+      ? parseFloat(priceMin) 
+      : null;
+    const maxPriceVal = priceMax !== undefined && priceMax !== null && priceMax !== '' && priceMax !== 'undefined' 
+      ? parseFloat(priceMax) 
+      : null;
 
-    if (minPriceVal !== null && maxPriceVal !== null && !isNaN(minPriceVal) && !isNaN(maxPriceVal)) {
+    const isDefaultRange = 
+      (minPriceVal === null || minPriceVal === 0 || isNaN(minPriceVal)) && 
+      (maxPriceVal === null || maxPriceVal === 100000000000 || maxPriceVal === 1000000000 || isNaN(maxPriceVal));
+    
+    if (!isDefaultRange && minPriceVal !== null && maxPriceVal !== null && 
+        !isNaN(minPriceVal) && !isNaN(maxPriceVal)) {
       query += ` AND COALESCE(p.price, p.min_budget) BETWEEN ? AND ?`;
       params.push(minPriceVal, maxPriceVal);
     }
@@ -1243,7 +1173,6 @@ router.get('/map', async (req, res) => {
     // Category filter
     if (propertyType && propertyType.trim() !== '') {
       const arr = propertyType.split(',').filter(p => p && p.trim());
-
       if (arr.length > 0) {
         const placeholders = arr.map(() => '?').join(',');
         query += ` AND c.category IN (${placeholders})`;
@@ -1276,15 +1205,8 @@ router.get('/map', async (req, res) => {
     query += ` ORDER BY p.created_at DESC LIMIT ?`;
     params.push(finalLimit);
 
-    console.log('SQL Query:', query);
-    console.log('Params count:', params.length);
-    console.log('Params values:', params);
-
     const [properties] = await db.query(query, params);
 
-    console.log(`Found ${properties.length} properties`);
-
-    // Transform response
     const transformed = properties.map(p => ({
       id: p.id,
       title: p.title,
@@ -1353,7 +1275,6 @@ router.get('/map', async (req, res) => {
     });
   }
 });
-
 
 router.get('/options/filters', async (req, res) => {
   try {
@@ -1425,6 +1346,7 @@ router.get('/options/filters', async (req, res) => {
     });
   }
 });
+
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
 
@@ -1523,6 +1445,7 @@ router.get('/:id', async (req, res) => {
 
 
 
+
 router.get('/options/filters/new', async (req, res) => {
   try {
 
@@ -1546,14 +1469,15 @@ router.get('/options/filters/new', async (req, res) => {
       ORDER BY property_type
     `);
 
-    const [priceRange] = await db.query(`
-      SELECT 
-        MIN(COALESCE(price, min_budget)) as min,
-        MAX(COALESCE(price, min_budget)) as max
-      FROM property_property 
-      WHERE Admin_status = 'Approved'
-      AND type IN ('jv/jd', 'build to suit')
-    `);
+    // ✅ REMOVE this query - we don't need actual min/max for filtering
+    // const [priceRange] = await db.query(`
+    //   SELECT 
+    //     MIN(COALESCE(price, min_budget)) as min,
+    //     MAX(COALESCE(price, min_budget)) as max
+    //   FROM property_property 
+    //   WHERE Admin_status = 'Approved'
+    //   AND type IN ('jv/jd', 'build to suit')
+    // `);
 
     const [totalCount] = await db.query(`
       SELECT COUNT(*) as total 
@@ -1565,13 +1489,17 @@ router.get('/options/filters/new', async (req, res) => {
     console.log('typeOptions:', typeOptions);
     console.log('propertyTypeOptions:', propertyTypeOptions);
 
+    // ✅ FIX: Return DEFAULT range (no filter applied initially)
+    const DEFAULT_MIN_PRICE = 0;
+    const DEFAULT_MAX_PRICE = 10000000000; // 1000 Crore (adjust as needed)
+
     res.json({
       success: true,
       typeOptions,
       propertyTypeOptions,
       priceRange: {
-        min: priceRange[0]?.min || 0,
-        max: priceRange[0]?.max || 5000000000
+        min: DEFAULT_MIN_PRICE,  // Always 0
+        max: DEFAULT_MAX_PRICE   // Always large number
       },
       totalProperties: totalCount[0]?.total || 0
     });

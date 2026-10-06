@@ -45,4 +45,59 @@ router.get('/api/properties/user/:userId', async (req, res) => {
   }
 });
 
+
+
+
+
+router.get('/inbox/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const [rows] = await db.query(`
+      SELECT
+          cm.chatid,
+          cm.message,
+          cm.is_read,
+          cm.created_at,
+          cm.property_id,
+
+          p.property_name,
+          p.user_id AS property_owner,
+
+          cm.other_user_id,
+
+          u.first_name,
+          u.last_name,
+          u.profile
+
+      FROM (
+          SELECT
+              *,
+              CASE
+                  WHEN user_id = ? THEN receiver
+                  ELSE user_id
+              END AS other_user_id
+          FROM users_chatmessage
+          WHERE user_id = ? OR receiver = ?
+      ) cm
+
+      JOIN property_property p
+        ON cm.property_id = p.property_id
+
+      JOIN users_user u
+        ON u.user_id = cm.other_user_id
+
+      ORDER BY cm.created_at DESC
+    `, [userId, userId, userId]);
+
+    res.json(rows);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      success: false,
+      message: 'Something went wrong'
+    });
+  }
+});
 module.exports = router;
